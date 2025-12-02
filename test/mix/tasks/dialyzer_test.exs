@@ -290,9 +290,9 @@ defmodule Mix.Tasks.DialyzerTest do
           Mix.Tasks.Dialyzer.run([
             "--incremental",
             "--apps",
-            "my_app,other_app",
+            "local_plt,kernel",
             "--warning-apps",
-            "my_app,third_app",
+            "local_plt",
             "--no-compile",
             "--ignore-exit-status"
           ])
@@ -302,10 +302,9 @@ defmodule Mix.Tasks.DialyzerTest do
         apps = Keyword.get(args, :apps)
         warning_apps = Keyword.get(args, :warning_apps)
         # warning_apps should be merged into apps
-        assert :my_app in apps
-        assert :other_app in apps
-        assert :third_app in apps
-        assert warning_apps == [:my_app, :third_app]
+        assert :local_plt in apps
+        assert :kernel in apps
+        assert warning_apps == [:local_plt]
       end)
     end
 
@@ -415,7 +414,7 @@ defmodule Mix.Tasks.DialyzerTest do
           Mix.Tasks.Dialyzer.run([
             "--incremental",
             "--warning-apps",
-            "my_app",
+            "incremental",
             "--no-compile",
             "--ignore-exit-status"
           ])
@@ -423,10 +422,10 @@ defmodule Mix.Tasks.DialyzerTest do
 
         assert_receive {:dialyzer_args, args}
         assert Keyword.has_key?(args, :warning_apps)
-        assert Keyword.get(args, :warning_apps) == [:my_app]
+        assert Keyword.get(args, :warning_apps) == [:incremental]
         # warning_apps are merged into apps, so apps is not empty and files are not included
         assert Keyword.has_key?(args, :apps)
-        assert :my_app in Keyword.get(args, :apps)
+        assert :incremental in Keyword.get(args, :apps)
         refute Keyword.has_key?(args, :files)
       end)
     end
@@ -476,9 +475,9 @@ defmodule Mix.Tasks.DialyzerTest do
           Mix.Tasks.Dialyzer.run([
             "--incremental",
             "--apps",
-            "kernel,stdlib,example_app",
+            "kernel,stdlib,incremental",
             "--warning-apps",
-            "example_app",
+            "incremental",
             "--no-compile",
             "--ignore-exit-status"
           ])
@@ -664,7 +663,7 @@ defmodule Mix.Tasks.DialyzerTest do
       end)
     end
 
-    test "warning_apps: :transitive flag is resolved correctly" do
+    test "warning_apps: :transitive flag is resolved correctly, but dependencies are filtered" do
       in_project(:warning_apps_transitive, fn ->
         parent = self()
 
@@ -676,24 +675,22 @@ defmodule Mix.Tasks.DialyzerTest do
           Application.delete_env(:dialyxir, :test_parent)
         end)
 
-        capture_io(fn ->
-          Mix.Tasks.Dialyzer.run([
-            "--incremental",
-            "--no-compile",
-            "--ignore-exit-status"
-          ])
-        end)
+        output =
+          capture_io(fn ->
+            Mix.Tasks.Dialyzer.run([
+              "--incremental",
+              "--no-compile",
+              "--ignore-exit-status"
+            ])
+          end)
 
         assert_receive {:dialyzer_args, args}
         warning_apps = Keyword.get(args, :warning_apps)
         assert is_list(warning_apps)
-        # Should include project app
-        assert :warning_apps_transitive in warning_apps
-        # Should include core apps from config
-        assert :erts in warning_apps
-        assert :kernel in warning_apps
-        assert :stdlib in warning_apps
-        assert :elixir in warning_apps
+        # Should only include project app (dependencies and core apps are filtered)
+        assert warning_apps == [:warning_apps_transitive]
+        # Verify that dependencies/core apps were filtered with a warning
+        assert output =~ "filtered out"
       end)
     end
 
@@ -782,7 +779,7 @@ defmodule Mix.Tasks.DialyzerTest do
           Mix.Tasks.Dialyzer.run([
             "--incremental",
             "--warning-apps",
-            "cli_warning_app",
+            "warning_apps_project",
             "--no-compile",
             "--ignore-exit-status"
           ])
@@ -791,7 +788,7 @@ defmodule Mix.Tasks.DialyzerTest do
         assert_receive {:dialyzer_args, args}
         warning_apps = Keyword.get(args, :warning_apps)
         # CLI should override config
-        assert warning_apps == [:cli_warning_app]
+        assert warning_apps == [:warning_apps_project]
       end)
     end
 
@@ -808,6 +805,71 @@ defmodule Mix.Tasks.DialyzerTest do
         warning_apps = Dialyxir.Project.dialyzer_warning_apps()
         assert is_list(warning_apps)
         assert :warning_apps_project in warning_apps
+      end)
+    end
+
+    test "dependencies are filtered from warning_apps with warning" do
+      in_project(:local_plt, fn ->
+        parent = self()
+
+        Application.put_env(:dialyxir, :dialyzer_module, DialyzerArgsCapture)
+        Application.put_env(:dialyxir, :test_parent, parent)
+
+        on_exit(fn ->
+          Application.delete_env(:dialyxir, :dialyzer_module)
+          Application.delete_env(:dialyxir, :test_parent)
+        end)
+
+        # Try to include a dependency in warning_apps
+        output =
+          capture_io(fn ->
+            Mix.Tasks.Dialyzer.run([
+              "--incremental",
+              "--warning-apps",
+              "local_plt,logger",
+              "--no-compile",
+              "--ignore-exit-status"
+            ])
+          end)
+
+        assert_receive {:dialyzer_args, args}
+        warning_apps = Keyword.get(args, :warning_apps)
+        # Only project app should be in warning_apps (logger is a dependency/OTP app)
+        assert :local_plt in warning_apps
+        refute :logger in warning_apps
+        # Verify warning was shown
+        assert output =~ "filtered out"
+        assert output =~ "logger"
+      end)
+    end
+
+    test "project apps are still allowed in warning_apps" do
+      in_project(:local_plt, fn ->
+        parent = self()
+
+        Application.put_env(:dialyxir, :dialyzer_module, DialyzerArgsCapture)
+        Application.put_env(:dialyxir, :test_parent, parent)
+
+        on_exit(fn ->
+          Application.delete_env(:dialyxir, :dialyzer_module)
+          Application.delete_env(:dialyxir, :test_parent)
+        end)
+
+        capture_io(fn ->
+          Mix.Tasks.Dialyzer.run([
+            "--incremental",
+            "--warning-apps",
+            "local_plt",
+            "--no-compile",
+            "--ignore-exit-status"
+          ])
+        end)
+
+        assert_receive {:dialyzer_args, args}
+        warning_apps = Keyword.get(args, :warning_apps)
+        # Project app should be in warning_apps
+        assert :local_plt in warning_apps
+        assert warning_apps == [:local_plt]
       end)
     end
   end

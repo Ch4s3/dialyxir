@@ -272,9 +272,22 @@ defmodule Mix.Tasks.Dialyzer do
             else: normalize_apps(warning_apps)
         end
 
-      # Ensure warning_apps are included in apps (warning_apps must be a subset of apps)
-      # This ensures Dialyzer analyzes all apps, but only reports warnings for warning_apps
-      # We automatically merge warning_apps into apps so they're always included
+      # Filter out non-project apps from warning_apps (only project apps allowed)
+      {project_warning_apps, filtered_apps} =
+        Enum.split_with(final_warning_apps, &is_project_app?/1)
+
+      if filtered_apps != [] do
+        warning("""
+        The following applications in warning_apps were filtered out (only project apps should be in warning_apps):
+        #{inspect(filtered_apps)}
+
+        Dependencies and OTP apps should be in 'apps' only, not 'warning_apps'.
+        """)
+      end
+
+      final_warning_apps = project_warning_apps
+
+      # Merge warning_apps into apps so Dialyzer analyzes all apps but only reports warnings for warning_apps
       final_apps =
         if incremental? && final_warning_apps != [] do
           (final_apps ++ final_warning_apps) |> Enum.uniq()
@@ -518,25 +531,72 @@ defmodule Mix.Tasks.Dialyzer do
     valid_apps
   end
 
+  defp is_project_app?(app) do
+    project_apps = Dialyxir.Project.project_apps()
+    app in project_apps
+  end
+
   defp app_exists?(app) do
-    # Check if app is already loaded (most reliable check)
     loaded_app = Application.get_application(app)
 
     if loaded_app != nil do
-      true
+      # Project apps are trusted; others need BEAM file verification for incremental mode
+      if is_project_app?(app), do: true, else: verify_beam_files_accessible?(app)
     else
-      # For OTP apps, check if lib_dir exists
-      # For local project apps, we let them through and let Dialyzer validate
       case :code.lib_dir(app) do
         {:error, :bad_name} ->
-          # Not an OTP app - might be local project app, let Dialyzer handle it
-          true
+          # Not an OTP app: allow project apps, verify dependencies have BEAM files
+          if is_project_app?(app), do: true, else: verify_beam_files_accessible?(app)
 
         path when is_list(path) ->
-          # OTP app exists
-          path_str = List.to_string(path)
-          File.exists?(path_str)
+          File.exists?(List.to_string(path))
       end
+    end
+  end
+
+  defp verify_beam_files_accessible?(app) do
+    deps_paths = Mix.Project.deps_paths()
+    dep_path = Map.get(deps_paths, app)
+
+    if dep_path do
+      beam_files_exist?(Path.join([dep_path, "ebin"]))
+    else
+      if is_project_app?(app) do
+        # Check build path (_build/{env}/lib/{app}/ebin) with fallback to :code.where_is_file
+        build_path = Mix.Project.build_path()
+        ebin_path = Path.join([build_path, "lib", Atom.to_string(app), "ebin"])
+
+        if beam_files_exist?(ebin_path) do
+          true
+        else
+          # Fallback: try to find BEAM file via :code.where_is_file
+          try do
+            module_name = app |> Atom.to_string() |> String.split("_") |> Enum.map(&String.capitalize/1) |> Enum.join("")
+            module = Module.concat([String.to_atom(module_name)])
+            beam_file = Atom.to_charlist(module) ++ ~c".beam"
+
+            case :code.where_is_file(beam_file) do
+              path when is_list(path) -> File.exists?(List.to_string(path))
+              :non_existing -> false
+            end
+          rescue
+            _ -> false
+          end
+        end
+      else
+        true
+      end
+    end
+  end
+
+  defp beam_files_exist?(ebin_path) do
+    if File.exists?(ebin_path) && File.dir?(ebin_path) do
+      ebin_path
+      |> Path.join("*.beam")
+      |> Path.wildcard()
+      |> length() > 0
+    else
+      false
     end
   end
 

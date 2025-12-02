@@ -235,9 +235,11 @@ defmodule Dialyxir.Project do
     |> Enum.uniq()
   end
 
-  # Returns project app(s) - uses Mix.Project.apps_paths/0 for umbrella,
-  # Mix.Project.config()[:app] for single app.
-  defp project_apps do
+  @doc """
+  Returns project app(s) - uses Mix.Project.apps_paths/0 for umbrella,
+  Mix.Project.config()[:app] for single app.
+  """
+  def project_apps do
     if function_exported?(Mix.Project, :apps_paths, 0) do
       case Mix.Project.apps_paths() do
         nil -> [Mix.Project.config()[:app]]
