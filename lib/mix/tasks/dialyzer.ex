@@ -540,8 +540,8 @@ defmodule Mix.Tasks.Dialyzer do
     loaded_app = Application.get_application(app)
 
     if loaded_app != nil do
-      # Project apps are trusted; others need BEAM file verification for incremental mode
-      if is_project_app?(app), do: true, else: verify_beam_files_accessible?(app)
+      # If app is loaded, it's accessible (trust the runtime)
+      true
     else
       case :code.lib_dir(app) do
         {:error, :bad_name} ->
@@ -555,37 +555,35 @@ defmodule Mix.Tasks.Dialyzer do
   end
 
   defp verify_beam_files_accessible?(app) do
+    # Only verify BEAM files for actual dependencies (not arbitrary apps in tests)
     deps_paths = Mix.Project.deps_paths()
-    dep_path = Map.get(deps_paths, app)
 
-    if dep_path do
-      beam_files_exist?(Path.join([dep_path, "ebin"]))
-    else
-      if is_project_app?(app) do
-        # Check build path (_build/{env}/lib/{app}/ebin) with fallback to :code.where_is_file
-        build_path = Mix.Project.build_path()
-        ebin_path = Path.join([build_path, "lib", Atom.to_string(app), "ebin"])
+    if Map.has_key?(deps_paths, app) do
+      # It's a dependency - verify BEAM files exist in build path
+      # Structure: _build/{env}/lib/{app}/ebin
+      build_path = Mix.Project.build_path()
+      ebin_path = Path.join([build_path, "lib", Atom.to_string(app), "ebin"])
 
-        if beam_files_exist?(ebin_path) do
-          true
-        else
-          # Fallback: try to find BEAM file via :code.where_is_file
-          try do
-            module_name = app |> Atom.to_string() |> String.split("_") |> Enum.map(&String.capitalize/1) |> Enum.join("")
-            module = Module.concat([String.to_atom(module_name)])
-            beam_file = Atom.to_charlist(module) ++ ~c".beam"
-
-            case :code.where_is_file(beam_file) do
-              path when is_list(path) -> File.exists?(List.to_string(path))
-              :non_existing -> false
-            end
-          rescue
-            _ -> false
-          end
-        end
-      else
+      if beam_files_exist?(ebin_path) do
         true
+      else
+        # Fallback: try to find BEAM file via :code.where_is_file
+        try do
+          module_name = app |> Atom.to_string() |> String.split("_") |> Enum.map(&String.capitalize/1) |> Enum.join("")
+          module = Module.concat([String.to_atom(module_name)])
+          beam_file = Atom.to_charlist(module) ++ ~c".beam"
+
+          case :code.where_is_file(beam_file) do
+            path when is_list(path) -> File.exists?(List.to_string(path))
+            :non_existing -> false
+          end
+        rescue
+          _ -> false
+        end
       end
+    else
+      # Not a dependency - allow it (let Dialyzer handle it)
+      true
     end
   end
 
