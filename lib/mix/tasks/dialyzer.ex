@@ -299,6 +299,36 @@ defmodule Mix.Tasks.Dialyzer do
       final_apps = filter_missing_apps(final_apps, "apps")
       final_warning_apps = filter_missing_apps(final_warning_apps, "warning_apps")
 
+      # In incremental mode, filter out OTP apps (can't compute MD5 for system-installed OTP apps)
+      # OTP apps should be in core PLTs, not passed via --apps
+      final_apps =
+        if incremental? do
+          {accessible_apps, otp_apps} =
+            Enum.split_with(final_apps, fn app ->
+              if is_project_app?(app) do
+                true
+              else
+                case :code.lib_dir(app) do
+                  {:error, :bad_name} -> true
+                  _path -> false
+                end
+              end
+            end)
+
+          if otp_apps != [] do
+            warning("""
+            The following OTP applications in apps were filtered out (OTP apps should be in core PLTs, not passed via --apps in incremental mode):
+            #{inspect(otp_apps)}
+
+            OTP apps like :elixir, :kernel, :stdlib are handled by core PLTs and should not be included in the apps list for incremental mode.
+            """)
+          end
+
+          accessible_apps
+        else
+          final_apps
+        end
+
       unless opts[:no_compile], do: Mix.Task.run("compile")
 
       no_check = no_check?(opts)

@@ -303,7 +303,8 @@ defmodule Mix.Tasks.DialyzerTest do
         warning_apps = Keyword.get(args, :warning_apps)
         # warning_apps should be merged into apps
         assert :local_plt in apps
-        assert :kernel in apps
+        # OTP apps like :kernel are filtered out in incremental mode (handled by core PLTs)
+        refute :kernel in apps
         assert warning_apps == [:local_plt]
       end)
     end
@@ -362,9 +363,10 @@ defmodule Mix.Tasks.DialyzerTest do
         assert_receive {:dialyzer_args, args}
         assert Keyword.has_key?(args, :apps)
         apps = Keyword.get(args, :apps)
-        assert length(apps) == 2
+        # OTP apps like :kernel are filtered out in incremental mode (handled by core PLTs)
+        assert length(apps) == 1
         assert :apps_config in apps
-        assert :kernel in apps
+        refute :kernel in apps
         # In incremental mode with apps, files should NOT be included
         # --apps and --files are mutually exclusive modes
         refute Keyword.has_key?(args, :files)
@@ -628,11 +630,11 @@ defmodule Mix.Tasks.DialyzerTest do
         assert is_list(apps)
         # Should include project app
         assert :apps_transitive in apps
-        # Should include core apps from config
-        assert :erts in apps
-        assert :kernel in apps
-        assert :stdlib in apps
-        assert :elixir in apps
+        # OTP apps like :erts, :kernel, :stdlib, :elixir are filtered out in incremental mode (handled by core PLTs)
+        refute :erts in apps
+        refute :kernel in apps
+        refute :stdlib in apps
+        refute :elixir in apps
       end)
     end
 
