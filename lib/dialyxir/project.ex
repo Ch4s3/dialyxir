@@ -156,7 +156,7 @@ defmodule Dialyxir.Project do
 
   This function resolves the `apps` configuration value, which can be:
   - An explicit list of apps: `[:app1, :app2, ...]`
-  - `:transitive` - automatically includes `core_apps` + all dependencies + project apps
+  - `:transitive` - automatically includes all dependencies + project apps
   - `:project` - automatically includes only project apps (umbrella children or single app)
   - `nil` - returns empty list (file mode)
 
@@ -166,10 +166,10 @@ defmodule Dialyxir.Project do
     config = dialyzer_config()
     resolved = resolve_apps(config)
 
-    # Maintain backward compatibility: if config is already a list, return it as-is
+    # Maintain backward compatibility: if config is already a list, resolve it (may contain :transitive)
     # If resolved is nil, return empty list for backward compatibility
     cond do
-      is_list(config[:apps]) -> config[:apps]
+      is_list(config[:apps]) -> resolve_apps(config)
       resolved == nil -> []
       true -> resolved
     end
@@ -180,7 +180,7 @@ defmodule Dialyxir.Project do
 
   This function resolves the `warning_apps` configuration value, which can be:
   - An explicit list of apps: `[:app1, :app2, ...]`
-  - `:transitive` - automatically includes `core_apps` + all dependencies + project apps
+  - `:transitive` - automatically includes all dependencies + project apps
   - `:project` - automatically includes only project apps (umbrella children or single app)
   - `nil` - returns empty list (no warning apps)
 
@@ -197,12 +197,6 @@ defmodule Dialyxir.Project do
       resolved == nil -> []
       true -> resolved
     end
-  end
-
-  # Returns core apps configured under :core_apps.
-  # This is a Dialyxir-only concept used for incremental app mode.
-  defp core_apps(config) do
-    Keyword.get(config, :core_apps, [])
   end
 
   # Returns dependency apps as a list of atoms.
@@ -257,10 +251,11 @@ defmodule Dialyxir.Project do
     * `nil`         – no app mode (stay in file mode)
     * `[:app, ...]` – explicit app list, used as-is
     * `:project`    – all project apps (umbrella children or single app)
-    * `:transitive`  – core_apps + all dependencies + project apps
+    * `:transitive`  – all dependencies + project apps
 
   Note: `:transitive` includes all dependencies that have an app, regardless of
   their `runtime` status. Only dependencies with `app: false` are excluded.
+  Users must explicitly list any OTP apps they want in their `apps` configuration.
   """
   @spec resolve_apps(Keyword.t()) :: nil | [atom()]
   def resolve_apps(config) do
@@ -269,13 +264,19 @@ defmodule Dialyxir.Project do
         nil
 
       apps when is_list(apps) ->
-        apps
+        # If list contains :transitive, expand it and merge with other apps
+        if :transitive in apps do
+          transitive_apps = dep_apps() ++ project_apps()
+          ((apps -- [:transitive]) ++ transitive_apps) |> Enum.uniq()
+        else
+          apps
+        end
 
       :project ->
         project_apps()
 
       :transitive ->
-        core_apps(config) ++ dep_apps() ++ project_apps()
+        dep_apps() ++ project_apps()
     end
   end
 
@@ -286,10 +287,11 @@ defmodule Dialyxir.Project do
     * `nil`         – no warning apps
     * `[:app, ...]` – explicit app list, used as-is
     * `:project`    – all project apps (umbrella children or single app)
-    * `:transitive`  – core_apps + all dependencies + project apps
+    * `:transitive`  – all dependencies + project apps
 
   Note: `:transitive` includes all dependencies that have an app, regardless of
   their `runtime` status. Only dependencies with `app: false` are excluded.
+  Users must explicitly list any OTP apps they want in their `warning_apps` configuration.
   """
   @spec resolve_warning_apps(Keyword.t()) :: nil | [atom()]
   def resolve_warning_apps(config) do
@@ -304,7 +306,7 @@ defmodule Dialyxir.Project do
         project_apps()
 
       :transitive ->
-        core_apps(config) ++ dep_apps() ++ project_apps()
+        dep_apps() ++ project_apps()
     end
   end
 
