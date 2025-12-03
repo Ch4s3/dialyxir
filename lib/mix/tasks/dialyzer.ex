@@ -108,20 +108,18 @@ defmodule Mix.Tasks.Dialyzer do
 
   * `dialyzer: :incremental` - enable Dialyzer's incremental analysis mode (requires OTP 26+). When set to `true`, Dialyzer will reuse previous analysis results and analyze changed modules plus any modules that depend on them, significantly speeding up subsequent runs. Note that incremental PLT files are separate from standard PLTs and are managed by Dialyzer itself.
 
-  * `dialyzer: :core_apps` - list of core OTP applications to include when using `apps: :transitive` or `warning_apps: :transitive`. Defaults to an empty list if not specified. This is useful for specifying which core OTP apps (like `:erts`, `:kernel`, `:stdlib`, `:elixir`, `:logger`, `:mix`) should be included in the analysis.
-
   * `dialyzer: :apps` - applications to analyze (requires incremental: true). These are
     typically OTP and third-party libraries that Dialyzer needs to understand but where you don't
     want warnings reported. Can be:
     - An explicit list: `[:erts, :kernel, :stdlib, ...]`
-    - `:transitive` - automatically includes `core_apps` + all dependencies + project apps
+    - `:transitive` - automatically includes all dependencies + project apps
     - `:project` - automatically includes only project apps (umbrella children or single app)
     - `nil` - file mode (no app mode)
 
   * `dialyzer: :warning_apps` - applications to emit warnings for (requires incremental: true).
     These are typically your own applications where you want warnings reported. Can be:
     - An explicit list: `[:my_app, :other_app]`
-    - `:transitive` - automatically includes `core_apps` + all dependencies + project apps
+    - `:transitive` - automatically includes all dependencies + project apps
     - `:project` - automatically includes only project apps (umbrella children or single app)
     - `nil` - no warning apps
 
@@ -150,8 +148,7 @@ defmodule Mix.Tasks.Dialyzer do
       deps: deps,
       dialyzer: [
         incremental: true,
-        core_apps: [:erts, :kernel, :stdlib, :crypto, :elixir, :logger, :mix],
-        apps: :transitive,  # Resolves to core_apps ++ deps ++ project_apps
+        apps: [:erts, :kernel, :stdlib, :crypto, :elixir, :logger, :mix] ++ deps ++ [:my_app],  # Explicit list including OTP apps, deps, and project apps
         warning_apps: :project  # Resolves to project apps only
       ]
     ]
@@ -291,40 +288,6 @@ defmodule Mix.Tasks.Dialyzer do
       final_apps =
         if incremental? && final_warning_apps != [] do
           (final_apps ++ final_warning_apps) |> Enum.uniq()
-        else
-          final_apps
-        end
-
-      # Filter out missing apps and warn about them
-      final_apps = filter_missing_apps(final_apps, "apps")
-      final_warning_apps = filter_missing_apps(final_warning_apps, "warning_apps")
-
-      # In incremental mode, filter out OTP apps (can't compute MD5 for system-installed OTP apps)
-      # OTP apps should be in core PLTs, not passed via --apps
-      final_apps =
-        if incremental? do
-          {accessible_apps, otp_apps} =
-            Enum.split_with(final_apps, fn app ->
-              if is_project_app?(app) do
-                true
-              else
-                case :code.lib_dir(app) do
-                  {:error, :bad_name} -> true
-                  _path -> false
-                end
-              end
-            end)
-
-          if otp_apps != [] do
-            warning("""
-            The following OTP applications in apps were filtered out (OTP apps should be in core PLTs, not passed via --apps in incremental mode):
-            #{inspect(otp_apps)}
-
-            OTP apps like :elixir, :kernel, :stdlib are handled by core PLTs and should not be included in the apps list for incremental mode.
-            """)
-          end
-
-          accessible_apps
         else
           final_apps
         end
@@ -545,87 +508,9 @@ defmodule Mix.Tasks.Dialyzer do
     app |> List.to_string() |> String.to_atom()
   end
 
-  defp filter_missing_apps(apps, context) when is_list(apps) do
-    {valid_apps, missing_apps} =
-      Enum.split_with(apps, &app_exists?/1)
-
-    if missing_apps != [] do
-      warning("""
-      The following applications in #{context} were not found and will be skipped:
-      #{inspect(missing_apps)}
-
-      This may cause Dialyzer to miss type information from these applications.
-      """)
-    end
-
-    valid_apps
-  end
-
   defp is_project_app?(app) do
     project_apps = Dialyxir.Project.project_apps()
     app in project_apps
-  end
-
-  defp app_exists?(app) do
-    loaded_app = Application.get_application(app)
-
-    if loaded_app != nil do
-      # If app is loaded, it's accessible (trust the runtime)
-      true
-    else
-      case :code.lib_dir(app) do
-        {:error, :bad_name} ->
-          # Not an OTP app: allow project apps, verify dependencies have BEAM files
-          if is_project_app?(app), do: true, else: verify_beam_files_accessible?(app)
-
-        path when is_list(path) ->
-          File.exists?(List.to_string(path))
-      end
-    end
-  end
-
-  defp verify_beam_files_accessible?(app) do
-    # Only verify BEAM files for actual dependencies (not arbitrary apps in tests)
-    deps_paths = Mix.Project.deps_paths()
-
-    if Map.has_key?(deps_paths, app) do
-      # It's a dependency - verify BEAM files exist in build path
-      # Structure: _build/{env}/lib/{app}/ebin
-      build_path = Mix.Project.build_path()
-      ebin_path = Path.join([build_path, "lib", Atom.to_string(app), "ebin"])
-
-      if beam_files_exist?(ebin_path) do
-        true
-      else
-        # Fallback: try to find BEAM file via :code.where_is_file
-        try do
-          module_name = app |> Atom.to_string() |> String.split("_") |> Enum.map(&String.capitalize/1) |> Enum.join("")
-          module = Module.concat([String.to_atom(module_name)])
-          beam_file = Atom.to_charlist(module) ++ ~c".beam"
-
-          case :code.where_is_file(beam_file) do
-            path when is_list(path) -> File.exists?(List.to_string(path))
-            :non_existing -> false
-          end
-        rescue
-          _ -> false
-        end
-      end
-    else
-      # Not a dependency - allow it (let Dialyzer handle it)
-      true
-    end
-  end
-
-  defp beam_files_exist?(ebin_path) do
-    if File.exists?(ebin_path) && File.dir?(ebin_path) do
-      ebin_path
-      |> Path.join("*.beam")
-      |> Path.wildcard()
-      |> length() > 0
-    else
-      false
-    end
   end
 
   defp dialyzer_warnings(dargs) do

@@ -8,7 +8,6 @@ defmodule AppsTransitive.Mixfile do
       prune_code_paths: false,
       dialyzer: [
         incremental: true,
-        core_apps: [:erts, :kernel, :stdlib, :elixir],
         apps: :transitive
       ]
     ]

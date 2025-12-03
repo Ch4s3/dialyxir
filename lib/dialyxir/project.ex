@@ -202,31 +202,92 @@ defmodule Dialyxir.Project do
   # Returns dependency apps as a list of atoms.
   defp dep_apps do
     # Get dependencies from Mix.Project.deps_paths() which returns a map of {app, path} pairs
-    Mix.Project.deps_paths()
+    deps_paths = Mix.Project.deps_paths()
+
+    # Collect all deps from root and child apps (for umbrella projects)
+    all_deps = collect_all_deps()
+
+    deps_paths
     |> Map.keys()
     |> Enum.filter(fn app ->
-      # Check if the dependency has an app enabled by looking at the project config
-      config = Mix.Project.config()
-      deps = config[:deps] || []
-
-      case Enum.find(deps, fn
-             {^app, opts} when is_list(opts) -> true
-             {^app, _req, opts} when is_list(opts) -> true
-             _ -> false
-           end) do
-        {_, opts} when is_list(opts) ->
-          # Only filter out deps with app: false, include all others regardless of runtime status
+      # Check if the dependency has an app enabled
+      case find_dep_config(app, all_deps) do
+        {:found, opts} ->
+          # Found the dep config - check app: option
           Keyword.get(opts, :app, true)
 
-        {_, _req, opts} when is_list(opts) ->
-          # Only filter out deps with app: false, include all others regardless of runtime status
-          Keyword.get(opts, :app, true)
+        :not_found ->
+          # If not found in any deps, it might be a transitive dep or from a child app
+          # Default to including it (it's in deps_paths, so it's a real dependency)
+          # Only exclude if we can verify it's not loadable AND it's not a project app
+          case Application.get_application(app) do
+            nil ->
+              # Not currently loaded - check if it's a project app
+              # If it's not a project app and not loadable, it might be app: false
+              # But to be safe, include it unless we can definitively say it's app: false
+              # For now, default to true (include it) since it's in deps_paths
+              true
 
-        _ ->
-          true
+            _app_name ->
+              # Loadable as an application, definitely include it
+              true
+          end
       end
     end)
     |> Enum.uniq()
+  end
+
+  # Collect all deps from root and child apps (for umbrella projects)
+  defp collect_all_deps do
+    root_config = Mix.Project.config()
+    root_deps = root_config[:deps] || []
+
+    # For umbrella projects, also collect child app deps
+    child_deps =
+      if function_exported?(Mix.Project, :apps_paths, 0) do
+        case Mix.Project.apps_paths() do
+          nil ->
+            []
+
+          apps_paths when is_map(apps_paths) ->
+            Enum.flat_map(apps_paths, fn {child_app, path} ->
+              child_mix_exs = Path.join(path, "mix.exs")
+
+              if File.exists?(child_mix_exs) do
+                try do
+                  # Use Mix.Project.in_project to properly load the child app's config
+                  Mix.Project.in_project(
+                    child_app,
+                    path,
+                    fn _project ->
+                      Mix.Project.config()[:deps] || []
+                    end
+                  )
+                rescue
+                  _ -> []
+                end
+              else
+                []
+              end
+            end)
+        end
+      else
+        []
+      end
+
+    root_deps ++ child_deps
+  end
+
+  defp find_dep_config(app, deps) do
+    case Enum.find(deps, fn
+           {^app, opts} when is_list(opts) -> true
+           {^app, _req, opts} when is_list(opts) -> true
+           _ -> false
+         end) do
+      {_, opts} when is_list(opts) -> {:found, opts}
+      {_, _req, opts} when is_list(opts) -> {:found, opts}
+      _ -> :not_found
+    end
   end
 
   @doc """

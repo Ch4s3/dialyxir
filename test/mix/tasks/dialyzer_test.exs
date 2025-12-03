@@ -303,8 +303,8 @@ defmodule Mix.Tasks.DialyzerTest do
         warning_apps = Keyword.get(args, :warning_apps)
         # warning_apps should be merged into apps
         assert :local_plt in apps
-        # OTP apps like :kernel are filtered out in incremental mode (handled by core PLTs)
-        refute :kernel in apps
+        # :kernel should be included since it's explicitly in apps
+        assert :kernel in apps
         assert warning_apps == [:local_plt]
       end)
     end
@@ -630,6 +630,7 @@ defmodule Mix.Tasks.DialyzerTest do
         assert is_list(apps)
         # Should include project app
         assert :apps_transitive in apps
+
         # OTP apps like :erts, :kernel, :stdlib, :elixir are filtered out in incremental mode (handled by core PLTs)
         refute :erts in apps
         refute :kernel in apps
@@ -720,19 +721,6 @@ defmodule Mix.Tasks.DialyzerTest do
         warning_apps = Keyword.get(args, :warning_apps)
         assert is_list(warning_apps)
         assert :warning_apps_project in warning_apps
-      end)
-    end
-
-    test "core_apps configuration is accessible" do
-      in_project(:core_apps_config, fn ->
-        # Verify that core_apps config exists and can be read
-        # This is tested indirectly through :transitive resolution in other tests
-        config = Mix.Project.config()[:dialyzer]
-        assert Keyword.has_key?(config, :core_apps)
-        core_apps = Keyword.get(config, :core_apps, [])
-        assert is_list(core_apps)
-        assert :erts in core_apps
-        assert :kernel in core_apps
       end)
     end
 

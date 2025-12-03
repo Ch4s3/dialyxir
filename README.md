@@ -329,24 +329,11 @@ into, but it only reports issues in the code you own.
 
 Both `apps` and `warning_apps` accept:
 - An explicit list of apps: `[:app1, :app2, ...]`
-- The `:transitive` flag – automatically includes `core_apps` + all dependencies + project apps
+- The `:transitive` flag – automatically includes all dependencies + project apps
 - The `:project` flag – automatically includes only project apps (umbrella children or single app)
 - `nil` – for `apps`, this means file mode (no app mode); for `warning_apps`, this means no warning apps
 
-**The `core_apps` option:**
-
-When using `:transitive`, you can configure which core OTP apps to include using the `core_apps` option:
-
-```elixir
-dialyzer: [
-  incremental: true,
-  core_apps: [:erts, :kernel, :stdlib, :crypto, :public_key, :ssl, :elixir, :logger, :mix],
-  apps: :transitive,
-  warning_apps: :project
-]
-```
-
-If `core_apps` is not specified, it defaults to an empty list. The `:transitive` flag will then include only dependencies and project apps.
+Note: When using `:transitive`, users must explicitly list any OTP apps (like `:erts`, `:kernel`, `:stdlib`, `:elixir`) they want in their `apps` configuration. The `:transitive` flag only automatically includes dependencies and project apps.
 
 **Via mix.exs configuration:**
 
@@ -365,8 +352,7 @@ dialyzer: [
 
 dialyzer: [
   incremental: true,
-  core_apps: [:erts, :kernel, :stdlib, :crypto, :elixir, :logger, :mix],
-  apps: :transitive,  # Resolves to core_apps ++ deps ++ project_apps
+  apps: [:erts, :kernel, :stdlib, :crypto, :elixir, :logger, :mix] ++ deps ++ [:my_app],  # Explicit list including OTP apps, deps, and project apps
   warning_apps: :project  # Resolves to project apps only
 ]
 ```

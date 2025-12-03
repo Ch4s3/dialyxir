@@ -270,26 +270,6 @@ defmodule Dialyxir.ProjectTest do
   end
 
   describe "apps and warning_apps flag resolution" do
-    test "core_apps configuration is read correctly" do
-      in_project(:core_apps_config, fn ->
-        config = Mix.Project.config()[:dialyzer]
-        # Test that core_apps config exists
-        assert Keyword.has_key?(config, :core_apps)
-        core_apps = Keyword.get(config, :core_apps, [])
-        assert is_list(core_apps)
-        assert :erts in core_apps
-        assert :kernel in core_apps
-
-        # Test via resolve_apps with :transitive
-        config_with_transitive = Keyword.put(config, :apps, :transitive)
-        resolved = Project.resolve_apps(config_with_transitive)
-        assert is_list(resolved)
-        # Should include core apps from config
-        assert :erts in resolved
-        assert :kernel in resolved
-      end)
-    end
-
     test "resolve_apps with nil returns nil" do
       config = [apps: nil]
       assert Project.resolve_apps(config) == nil
@@ -309,18 +289,18 @@ defmodule Dialyxir.ProjectTest do
       end)
     end
 
-    test "resolve_apps with :transitive includes core_apps, deps, and project apps" do
+    test "resolve_apps with :transitive includes deps and project apps" do
       in_project(:apps_transitive, fn ->
         config = Mix.Project.config()[:dialyzer]
         resolved = Project.resolve_apps(config)
         assert is_list(resolved)
         # Should include project app
         assert :apps_transitive in resolved
-        # Should include core apps from config
-        assert :erts in resolved
-        assert :kernel in resolved
-        assert :stdlib in resolved
-        assert :elixir in resolved
+        # Should NOT include core apps (users must explicitly list them)
+        refute :erts in resolved
+        refute :kernel in resolved
+        refute :stdlib in resolved
+        refute :elixir in resolved
       end)
     end
 
@@ -343,18 +323,18 @@ defmodule Dialyxir.ProjectTest do
       end)
     end
 
-    test "resolve_warning_apps with :transitive includes core_apps, deps, and project apps" do
+    test "resolve_warning_apps with :transitive includes deps and project apps" do
       in_project(:warning_apps_transitive, fn ->
         config = Mix.Project.config()[:dialyzer]
         resolved = Project.resolve_warning_apps(config)
         assert is_list(resolved)
         # Should include project app
         assert :warning_apps_transitive in resolved
-        # Should include core apps from config
-        assert :erts in resolved
-        assert :kernel in resolved
-        assert :stdlib in resolved
-        assert :elixir in resolved
+        # Should NOT include core apps (users must explicitly list them)
+        refute :erts in resolved
+        refute :kernel in resolved
+        refute :stdlib in resolved
+        refute :elixir in resolved
       end)
     end
 
