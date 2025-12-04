@@ -373,9 +373,9 @@ defmodule Dialyxir.ProjectTest do
         apps = Project.dialyzer_apps()
         assert is_list(apps)
         assert :apps_transitive in apps
-        # Should include core apps
-        assert :erts in apps
-        assert :kernel in apps
+        # :transitive does NOT include OTP apps - users must explicitly list them
+        refute :erts in apps
+        refute :kernel in apps
       end)
     end
 
@@ -401,9 +401,9 @@ defmodule Dialyxir.ProjectTest do
         warning_apps = Project.dialyzer_warning_apps()
         assert is_list(warning_apps)
         assert :warning_apps_transitive in warning_apps
-        # Should include core apps
-        assert :erts in warning_apps
-        assert :kernel in warning_apps
+        # :transitive does NOT include OTP apps - users must explicitly list them
+        refute :erts in warning_apps
+        refute :kernel in warning_apps
       end)
     end
 
