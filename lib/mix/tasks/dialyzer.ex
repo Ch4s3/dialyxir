@@ -317,7 +317,7 @@ defmodule Mix.Tasks.Dialyzer do
       warn_old_options(opts)
 
       unless opts[:plt] do
-        run_dialyzer(opts, dargs, selection.apps, selection.warning_apps)
+        run_dialyzer(opts, dargs, selection)
       end
     else
       info("No mix project found - checking core PLTs...")
@@ -378,28 +378,12 @@ defmodule Mix.Tasks.Dialyzer do
     end
   end
 
-  defp run_dialyzer(opts, dargs, apps, warning_apps) do
+  defp run_dialyzer(opts, dargs, selection) do
     incremental? = Keyword.get(opts, :incremental, false)
 
     plt_file = Project.plt_file(incremental?)
 
-    args = [
-      {:check_plt, opts[:force_check] || false},
-      {:init_plt, String.to_charlist(plt_file)},
-      {:warnings, dialyzer_warnings(dargs)},
-      {:format, Keyword.get_values(opts, :format)},
-      {:raw, opts[:raw]},
-      {:list_unused_filters, opts[:list_unused_filters]},
-      {:ignore_exit_status, opts[:ignore_exit_status]},
-      {:quiet_with_result, opts[:quiet_with_result]},
-      {:incremental, incremental?}
-    ]
-
-    args =
-      args
-      |> maybe_put_apps(apps)
-      |> maybe_put_warning_apps(warning_apps)
-      |> maybe_put_files(apps, warning_apps)
+    args = dialyzer_args(opts, dargs, plt_file, incremental?, selection)
 
     {status, exit_status, [time | result]} = Dialyzer.dialyze(args)
     info(time)
@@ -430,13 +414,32 @@ defmodule Mix.Tasks.Dialyzer do
     end
   end
 
+  defp dialyzer_args(opts, dargs, plt_file, incremental?, selection) do
+    base_args = [
+      {:check_plt, opts[:force_check] || false},
+      {:init_plt, String.to_charlist(plt_file)},
+      {:warnings, dialyzer_warnings(dargs)},
+      {:format, Keyword.get_values(opts, :format)},
+      {:raw, opts[:raw]},
+      {:list_unused_filters, opts[:list_unused_filters]},
+      {:ignore_exit_status, opts[:ignore_exit_status]},
+      {:quiet_with_result, opts[:quiet_with_result]},
+      {:incremental, incremental?}
+    ]
+
+    base_args
+    |> maybe_put_apps(selection.apps)
+    |> maybe_put_warning_apps(selection.warning_apps)
+    |> maybe_put_files(selection.apps)
+  end
+
   defp maybe_put_apps(opts, []), do: opts
   defp maybe_put_apps(opts, apps), do: Keyword.put(opts, :apps, apps)
 
   defp maybe_put_warning_apps(opts, []), do: opts
   defp maybe_put_warning_apps(opts, apps), do: Keyword.put(opts, :warning_apps, apps)
 
-  defp maybe_put_files(args, apps, _warning_apps) do
+  defp maybe_put_files(args, apps) do
     cond do
       apps != [] ->
         # Application-based mode: when apps are provided, do NOT pass files.
