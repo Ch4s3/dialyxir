@@ -153,4 +153,108 @@ defmodule Dialyxir.DialyzerTest do
       assert {:analysis_type, :incremental} in final_args
     end
   end
+
+  describe "maybe_add_macos_ulimit_hint/1" do
+    alias Dialyxir.Dialyzer.Runner
+
+    test "returns original message when not a file descriptor error" do
+      msg = "some other error message"
+      result = Runner.maybe_add_macos_ulimit_hint(msg)
+      assert result == msg
+    end
+
+    test "adds hint for dialyzer_iplt MD5 computation error on macOS" do
+      # Real error format from dialyzer_iplt.erl compute_md5_from_file/1
+      msg =
+        "Could not compute MD5 for .beam: /path/to/Elixir.MyModule.beam (reason: {file_error,\"/path/to/Elixir.MyModule.beam\",emfile})"
+
+      result = Runner.maybe_add_macos_ulimit_hint(msg)
+
+      case :os.type() do
+        {:unix, :darwin} ->
+          assert String.contains?(result, "macOS FILE DESCRIPTOR LIMIT")
+          assert String.contains?(result, "ulimit -n 1024")
+          assert String.contains?(result, msg)
+
+        _ ->
+          # On non-macOS, should return original message
+          assert result == msg
+      end
+    end
+
+    test "adds hint for erl_prim_loader file operation error on macOS" do
+      # Real error format from erl_prim_loader
+      msg =
+        "File operation error: emfile. Target: /Users/dev/.asdf/installs/elixir/1.18.4/lib/elixir/ebin/application.beam. Function: get_modules."
+
+      result = Runner.maybe_add_macos_ulimit_hint(msg)
+
+      case :os.type() do
+        {:unix, :darwin} ->
+          assert String.contains?(result, "macOS FILE DESCRIPTOR LIMIT")
+          assert String.contains?(result, "ulimit -n 1024")
+
+        _ ->
+          assert result == msg
+      end
+    end
+
+    test "adds hint for 'too many open files' error on macOS" do
+      msg = "Error: too many open files"
+      result = Runner.maybe_add_macos_ulimit_hint(msg)
+
+      case :os.type() do
+        {:unix, :darwin} ->
+          assert String.contains?(result, "macOS FILE DESCRIPTOR LIMIT")
+          assert String.contains?(result, "ulimit -n 1024")
+
+        _ ->
+          assert result == msg
+      end
+    end
+
+    test "adds hint for system_limit error on macOS" do
+      msg = "system_limit reached"
+      result = Runner.maybe_add_macos_ulimit_hint(msg)
+
+      case :os.type() do
+        {:unix, :darwin} ->
+          assert String.contains?(result, "macOS FILE DESCRIPTOR LIMIT")
+          assert String.contains?(result, "ulimit -n 1024")
+
+        _ ->
+          assert result == msg
+      end
+    end
+
+    test "is case-insensitive for error detection" do
+      msg = "EMFILE error occurred"
+      result = Runner.maybe_add_macos_ulimit_hint(msg)
+
+      case :os.type() do
+        {:unix, :darwin} ->
+          assert String.contains?(result, "macOS FILE DESCRIPTOR LIMIT")
+
+        _ ->
+          assert result == msg
+      end
+    end
+
+    test "preserves original error message in the hint" do
+      # Real error format with full path
+      original_msg =
+        "Could not compute MD5 for .beam: /Users/dev/project/_build/dev/lib/myapp/ebin/Elixir.MyApp.beam (reason: {file_error,\"/Users/dev/project/_build/dev/lib/myapp/ebin/Elixir.MyApp.beam\",emfile})"
+
+      result = Runner.maybe_add_macos_ulimit_hint(original_msg)
+
+      case :os.type() do
+        {:unix, :darwin} ->
+          assert String.contains?(result, original_msg)
+          assert String.contains?(result, "macOS FILE DESCRIPTOR LIMIT")
+
+        _ ->
+          assert result == original_msg
+      end
+    end
+  end
 end

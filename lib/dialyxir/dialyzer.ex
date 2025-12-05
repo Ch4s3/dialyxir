@@ -68,8 +68,56 @@ defmodule Dialyxir.Dialyzer do
         end
       catch
         {:dialyzer_error, msg} ->
-          {:error, ":dialyzer.run error: " <> Chars.to_string(msg)}
+          {:error, ":dialyzer.run error: " <> maybe_add_macos_ulimit_hint(Chars.to_string(msg))}
       end
+    end
+
+    @doc false
+    def maybe_add_macos_ulimit_hint(msg) do
+      if macos?() and file_descriptor_error?(msg) do
+        """
+        #{msg}
+
+        ================================================================================
+        macOS FILE DESCRIPTOR LIMIT
+        ================================================================================
+        This error often occurs on macOS when the file descriptor limit is too low.
+        The default limit (256) is insufficient for incremental Dialyzer analysis.
+
+        To fix, run before invoking mix dialyzer:
+
+            ulimit -n 1024
+
+        Or add to your shell profile (~/.zshrc or ~/.bashrc):
+
+            ulimit -n 1024
+
+        For very large codebases, you may need higher values (4096, 10240, etc.).
+        ================================================================================
+        """
+      else
+        msg
+      end
+    end
+
+    defp macos? do
+      case :os.type() do
+        {:unix, :darwin} -> true
+        _ -> false
+      end
+    end
+
+    defp file_descriptor_error?(msg) do
+      downcased = String.downcase(msg)
+
+      # Match real error patterns from OTP:
+      # - dialyzer_iplt.erl: "Could not compute MD5 for .beam: /path (reason: {file_error,\"/path\",emfile})"
+      # - erl_prim_loader: "File operation error: emfile. Target: /path. Function: get_modules."
+      # - POSIX error: "too many open files"
+      String.contains?(downcased, "emfile") or
+        String.contains?(downcased, "too many open files") or
+        String.contains?(downcased, "system_limit") or
+        String.contains?(downcased, "file operation error")
     end
 
     defp maybe_enable_incremental(args, true) do

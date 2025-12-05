@@ -219,7 +219,8 @@ defmodule Dialyxir.Plt do
       :dialyzer.run([check_plt: false] ++ opts)
     catch
       {:dialyzer_error, msg} ->
-        error(color(":dialyzer.run error: #{msg}", :red))
+        enhanced_msg = Dialyxir.Dialyzer.Runner.maybe_add_macos_ulimit_hint(to_string(msg))
+        error(color(":dialyzer.run error: #{enhanced_msg}", :red))
     end
   end
 
