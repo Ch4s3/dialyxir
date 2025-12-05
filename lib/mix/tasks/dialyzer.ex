@@ -134,7 +134,7 @@ defmodule Mix.Tasks.Dialyzer do
       deps: deps,
       dialyzer: [
         incremental: true,
-        apps: [:erts, :kernel, :stdlib, :elixir, :logger],
+        apps: [:erts, :kernel, :stdlib, :elixir, :logger, :my_app],
         warning_apps: [:my_app]
       ]
     ]
@@ -148,7 +148,7 @@ defmodule Mix.Tasks.Dialyzer do
       deps: deps,
       dialyzer: [
         incremental: true,
-        apps: [:erts, :kernel, :stdlib, :crypto, :elixir, :logger, :mix] ++ deps ++ [:my_app],  # Explicit list including OTP apps, deps, and project apps
+        apps: [:erts, :kernel, :stdlib, :crypto, :elixir, :logger, :mix] ++ deps ++ [:project],  # Explicit list including OTP apps, deps, and project apps
         warning_apps: :project  # Resolves to project apps only
       ]
     ]
@@ -162,6 +162,7 @@ defmodule Mix.Tasks.Dialyzer do
   alias Dialyxir.Project
   alias Dialyxir.Plt
   alias Dialyxir.Dialyzer
+  alias Dialyxir.AppSelection
 
   defmodule Build do
     @shortdoc "Build the required PLT(s) and exit."
@@ -248,70 +249,14 @@ defmodule Mix.Tasks.Dialyzer do
         exit(1)
       end
 
-      # apps and warning_apps are only valid in incremental mode
-      # When incremental is false, ignore both CLI and config values (use file mode)
-      {final_apps, final_warning_apps} =
-        if incremental? do
-          # Merge CLI values with config values (CLI takes precedence)
-          config_apps = Dialyxir.Project.dialyzer_apps()
-          config_warning_apps = Dialyxir.Project.dialyzer_warning_apps()
-
-          # config_apps should already have :transitive expanded by dialyzer_apps()
-          resolved_apps =
-            if apps == [] do
-              normalize_apps(config_apps)
-            else
-              # CLI apps might contain :transitive, expand it if present
-              expanded_apps = expand_transitive_if_needed(apps)
-              normalize_apps(expanded_apps)
-            end
-
-          # config_warning_apps should already have :transitive expanded by dialyzer_warning_apps()
-          resolved_warning_apps =
-            if warning_apps == [] do
-              normalize_apps(config_warning_apps)
-            else
-              # CLI warning_apps might contain :transitive, expand it if present
-              expanded_warning_apps = expand_transitive_if_needed(warning_apps)
-              normalize_apps(expanded_warning_apps)
-            end
-
-          {resolved_apps, resolved_warning_apps}
-        else
-          # Incremental mode is disabled - ignore apps/warning_apps config and use file mode
-          {[], []}
-        end
-
-      # Filter out non-project apps from warning_apps (only project apps allowed)
-      # This only applies in incremental mode
-      final_warning_apps =
-        if incremental? do
-          {project_warning_apps, filtered_apps} =
-            Enum.split_with(final_warning_apps, &is_project_app?/1)
-
-          if filtered_apps != [] do
-            warning("""
-            The following applications in warning_apps were filtered out (only project apps should be in warning_apps):
-            #{inspect(filtered_apps)}
-
-            Dependencies and OTP apps should be in 'apps' only, not 'warning_apps'.
-            """)
-          end
-
-          project_warning_apps
-        else
-          # Not in incremental mode, warning_apps should be empty
-          []
-        end
-
-      # Merge warning_apps into apps so Dialyzer analyzes all apps but only reports warnings for warning_apps
-      # This only applies in incremental mode
-      final_apps =
-        if incremental? && final_warning_apps != [] do
-          (final_apps ++ final_warning_apps) |> Enum.uniq()
-        else
-          final_apps
-        end
+      selection =
+        AppSelection.resolve(
+          incremental: incremental?,
+          cli_apps: apps,
+          cli_warning_apps: warning_apps,
+          config_apps: Dialyxir.Project.dialyzer_apps(),
+          config_warning_apps: Dialyxir.Project.dialyzer_warning_apps()
+        )
 
       unless opts[:no_compile], do: Mix.Task.run("compile")
 
@@ -372,7 +317,7 @@ defmodule Mix.Tasks.Dialyzer do
       warn_old_options(opts)
 
       unless opts[:plt] do
-        run_dialyzer(opts, dargs, final_apps, final_warning_apps)
+        run_dialyzer(opts, dargs, selection.apps, selection.warning_apps)
       end
     else
       info("No mix project found - checking core PLTs...")
@@ -513,40 +458,6 @@ defmodule Mix.Tasks.Dialyzer do
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.map(&String.to_atom/1)
-  end
-
-  defp normalize_apps(apps) when is_list(apps) do
-    # Expand :transitive if present before normalizing
-    expanded = expand_transitive_if_needed(apps)
-    Enum.map(expanded, &normalize_app/1)
-  end
-
-  defp normalize_apps(_), do: []
-
-  defp normalize_app(app) when is_atom(app), do: app
-  defp normalize_app(app) when is_binary(app), do: String.to_atom(app)
-
-  defp normalize_app(app) when is_list(app) do
-    # Handle charlists (like ~c"app_name")
-    app |> List.to_string() |> String.to_atom()
-  end
-
-  # Expand :transitive in a list of apps if present
-  defp expand_transitive_if_needed(apps) when is_list(apps) do
-    if :transitive in apps do
-      # Use resolve_apps to get transitive apps (same logic as in Project.resolve_apps)
-      transitive_apps = Dialyxir.Project.resolve_apps(apps: :transitive) || []
-      ((apps -- [:transitive]) ++ transitive_apps) |> Enum.uniq()
-    else
-      apps
-    end
-  end
-
-  defp expand_transitive_if_needed(apps), do: apps
-
-  defp is_project_app?(app) do
-    project_apps = Dialyxir.Project.project_apps()
-    app in project_apps
   end
 
   defp dialyzer_warnings(dargs) do
