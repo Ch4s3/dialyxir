@@ -245,10 +245,10 @@ defmodule Dialyxir.Plt do
         Keyword.fetch!(info, :files)
         |> Enum.reduce(MapSet.new(), &MapSet.put(&2, Path.expand(&1)))
 
-      {:ok, {:incremental, _modules}} ->
-        # Incremental PLTs are managed by Dialyzer itself and have a different structure
-        # Return nil to indicate we can't enumerate files from incremental PLTs
-        nil
+      {:ok, {:incremental, info}} ->
+        # Incremental PLTs return a keyword list with :modules key
+        modules = Keyword.get(info, :modules, [])
+        resolve_modules(modules, MapSet.new())
 
       {:error, :no_such_file} ->
         nil
