@@ -165,14 +165,7 @@ defmodule Dialyxir.Project do
   def dialyzer_apps do
     config = dialyzer_config()
     resolved = resolve_apps(config)
-
-    # Maintain backward compatibility: if config is already a list, resolve it (may contain :transitive)
-    # If resolved is nil, return empty list for backward compatibility
-    cond do
-      is_list(config[:apps]) -> resolve_apps(config)
-      resolved == nil -> []
-      true -> resolved
-    end
+    fallback_list(resolved, config[:apps], :apps)
   end
 
   @doc """
@@ -189,14 +182,7 @@ defmodule Dialyxir.Project do
   def dialyzer_warning_apps do
     config = dialyzer_config()
     resolved = resolve_warning_apps(config)
-
-    # Maintain backward compatibility: if config is already a list, return it as-is
-    # If resolved is nil, return empty list for backward compatibility
-    cond do
-      is_list(config[:warning_apps]) -> config[:warning_apps]
-      resolved == nil -> []
-      true -> resolved
-    end
+    fallback_list(resolved, config[:warning_apps], :warning_apps)
   end
 
   # Returns dependency apps as a list of atoms.
@@ -325,13 +311,7 @@ defmodule Dialyxir.Project do
         nil
 
       apps when is_list(apps) ->
-        # If list contains :transitive, expand it and merge with other apps
-        if :transitive in apps do
-          transitive_apps = dep_apps() ++ project_apps()
-          ((apps -- [:transitive]) ++ transitive_apps) |> Enum.uniq()
-        else
-          apps
-        end
+        expand_transitive_apps(apps)
 
       :project ->
         project_apps()
@@ -370,6 +350,38 @@ defmodule Dialyxir.Project do
         dep_apps() ++ project_apps()
     end
   end
+
+  defp fallback_list(resolved, config_value, key) do
+    cond do
+      is_list(config_value) ->
+        resolve_list_value(config_value, key)
+
+      resolved == nil ->
+        []
+
+      true ->
+        resolved
+    end
+  end
+
+  defp resolve_list_value(value, :apps) do
+    resolve_apps(apps: value) || []
+  end
+
+  defp resolve_list_value(value, :warning_apps) do
+    value
+  end
+
+  defp expand_transitive_apps(apps) when is_list(apps) do
+    if Enum.member?(apps, :transitive) do
+      transitive_apps = dep_apps() ++ project_apps()
+      ((apps -- [:transitive]) ++ transitive_apps) |> Enum.uniq()
+    else
+      apps
+    end
+  end
+
+  defp expand_transitive_apps(apps), do: apps
 
   def no_umbrella? do
     case dialyzer_config()[:no_umbrella] do
